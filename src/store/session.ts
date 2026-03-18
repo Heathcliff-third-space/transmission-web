@@ -15,7 +15,7 @@ export const useSessionStore = defineStore('session', () => {
       const res = await rpc.sessionGet()
       if (res?.arguments) {
         session.value = res.arguments
-        document.title = `Transmission - ${session.value.version?.replace(/\(.+\)/, '')}`
+        document.title = 'Transmission'
         return true
       }
     } catch (e: any) {
