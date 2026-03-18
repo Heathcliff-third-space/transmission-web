@@ -135,13 +135,13 @@ const cellComponentMap: Record<string, Component> = {
     background-color: var(--table-color-hover);
   }
   &.selected {
-    background-color: color-mix(in srgb, var(--primary-color) 50%, transparent);
+    background-color: color-mix(in srgb, var(--primary-color) 14%, var(--table-color));
   }
 
   &:nth-child(even) {
-    background-color: color-mix(in srgb, var(--table-color-hover) 50%, transparent);
+    background-color: var(--table-color);
     &.selected {
-      background-color: color-mix(in srgb, var(--primary-color) 50%, transparent);
+      background-color: color-mix(in srgb, var(--primary-color) 14%, var(--table-color));
     }
   }
 }

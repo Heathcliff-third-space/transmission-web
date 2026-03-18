@@ -49,7 +49,7 @@ export const useSettingStore = defineStore('setting', () => {
         torrentDetailInterval: 5,
         torrentInterval: 5
       },
-      menuExpandedKeys: ['status', 'labels', 'dir'],
+      menuExpandedKeys: ['status', 'labels'],
       // 忽略域名中的部分前缀
       ignoredTrackerPrefixes: ['t', 'tr', 'tk', 'tracker', 'bt', 'open', 'opentracker', 'pt']
     },

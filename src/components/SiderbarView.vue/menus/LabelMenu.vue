@@ -2,6 +2,7 @@
   <n-menu
     :indent="8"
     :options="labelMenuOptions"
+    :theme-overrides="sidebarMenuThemeOverrides"
     v-model:value="torrentStore.labelsFilter"
     v-model:expanded-keys="settingStore.menuExpandedKeys"
   />
@@ -11,6 +12,7 @@ import { useTorrentStore, useSettingStore } from '@/store'
 import { renderIcon } from '@/utils'
 import { Pricetag, Pricetags } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
+import { sidebarMenuThemeOverrides } from './menuThemeOverrides'
 
 const torrentStore = useTorrentStore()
 const settingStore = useSettingStore()

@@ -73,6 +73,7 @@ import LayoutSidebarLeftOpen from '@/assets/icons/layoutSidebarLeft.svg?componen
 import { useIsSmallScreen } from '@/composables/useIsSmallScreen'
 import { useSettingStore, useStatsStore, useTorrentStore } from '@/store'
 import { useSessionStore } from '@/store/session'
+import { startPerfScope } from '@/utils/perf'
 import useToolbarStore from '@/components/CanvasList/store/toolbarStore'
 
 const torrentStore = useTorrentStore()
@@ -128,9 +129,11 @@ watchEffect(() => {
 
 watch([pcDetailVisible, mobileDetailVisible, () => torrentStore.selectedKeys], () => {
   if (pcDetailVisible.value || mobileDetailVisible.value) {
+    const perf = startPerfScope('detail.selectionToLoaded', 6)
     loadingDetail.value = true
     torrentStore.fetchDetails().finally(() => {
       loadingDetail.value = false
+      perf.end()
     })
     torrentStore.startDetailPolling()
   } else {

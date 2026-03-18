@@ -133,7 +133,8 @@
     "labels": "用户标签",
     "error": "错误分布",
     "directory": "目录分布",
-    "tracker": "服务器分布"
+    "tracker": "服务器分布",
+    "copyDirectory": "复制目录"
   },
   "status": {
     "stopped": "已暂停",
@@ -350,6 +351,7 @@
     "taskVerified": "已校验",
     "nameCopied": "名称已复制",
     "pathCopied": "路径已复制",
+    "directoryCopied": "目录已复制",
     "magnetCopied": "磁力链接已复制",
     "copyFailed": "复制失败",
     "reannounced": "已重新汇报",

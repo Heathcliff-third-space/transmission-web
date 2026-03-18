@@ -2,6 +2,7 @@
   <n-menu
     :indent="8"
     :options="errorMenuOptions"
+    :theme-overrides="sidebarMenuThemeOverrides"
     v-model:value="torrentStore.errorStringFilter"
     v-model:expanded-keys="settingStore.menuExpandedKeys"
   />
@@ -11,6 +12,7 @@ import DismissSquareIcon from '@/assets/icons/dismissSquare.svg?component'
 import { useTorrentStore, useSettingStore } from '@/store'
 import { renderIcon } from '@/utils'
 import { useI18n } from 'vue-i18n'
+import { sidebarMenuThemeOverrides } from './menuThemeOverrides'
 const torrentStore = useTorrentStore()
 const settingStore = useSettingStore()
 const { t: $t } = useI18n()

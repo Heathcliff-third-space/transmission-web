@@ -281,6 +281,8 @@ export interface TorrentOther {
   cachedTrackerStatus: string
   /** 主 tracker */
   cachedMainTracker: string
+  /** 归一化后的 tracker host 列表 */
+  cachedTrackerHosts?: string[]
   /** 缓存种子数 */
   cachedSeedsTotal: number
   /** 缓存 peer 数 */

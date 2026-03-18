@@ -1,5 +1,6 @@
 import { useIsSmallScreen } from '@/composables/useIsSmallScreen'
 import { useSettingStore, useTorrentStore } from '@/store'
+import { startPerfScope } from '@/utils/perf'
 import { defineStore } from 'pinia'
 import type { MobileRowHeightInfo } from '../MobileCells'
 import { calculateMobileRowHeightInfo } from './mobileUtils'
@@ -26,41 +27,46 @@ export const useCardStore = defineStore('CanvasCard', () => {
 
   // 计算移动端卡片累积高度
   const cumulativeHeights = computed(() => {
+    const perf = startPerfScope('card.cumulativeHeights', 6)
     const heights: number[] = []
     const mapRowHeights = new Map<number, number>()
     let total = 0
 
-    for (const torrent of torrentStore.filterTorrents) {
-      const cacheData = cacheRowHeightsMobile.get(torrent.id)
-      // 检查名称、标签和客户端宽度是否变化
-      if (
-        cacheData &&
-        // cacheData.labels === torrent.labels.toString() &&
-        cacheData.name === torrent.name &&
-        cacheData.clientWidth === virtualList.clientWidth.value
-      ) {
-        total += cacheData.heightInfo.totalHeight
+    perf.section('walkFilteredTorrents', () => {
+      for (const torrent of torrentStore.filterTorrents) {
+        const cacheData = cacheRowHeightsMobile.get(torrent.id)
+        // 检查名称、标签和客户端宽度是否变化
+        if (
+          cacheData &&
+          // cacheData.labels === torrent.labels.toString() &&
+          cacheData.name === torrent.name &&
+          cacheData.clientWidth === virtualList.clientWidth.value
+        ) {
+          total += cacheData.heightInfo.totalHeight
+          heights.push(total)
+          mapRowHeights.set(torrent.id, cacheData.heightInfo.totalHeight)
+          continue
+        }
+        // 重新计算移动端高度信息
+        const heightInfo = calculateMobileRowHeightInfo(torrent, virtualList.clientWidth.value, settingStore.themeVars)
+        mapRowHeights.set(torrent.id, heightInfo.totalHeight)
+        cacheRowHeightsMobile.set(torrent.id, {
+          heightInfo,
+          labels: torrent.labels.toString(),
+          name: torrent.name,
+          clientWidth: virtualList.clientWidth.value
+        })
+        total += heightInfo.totalHeight
         heights.push(total)
-        mapRowHeights.set(torrent.id, cacheData.heightInfo.totalHeight)
-        continue
       }
-      // 重新计算移动端高度信息
-      const heightInfo = calculateMobileRowHeightInfo(torrent, virtualList.clientWidth.value, settingStore.themeVars)
-      mapRowHeights.set(torrent.id, heightInfo.totalHeight)
-      cacheRowHeightsMobile.set(torrent.id, {
-        heightInfo,
-        labels: torrent.labels.toString(),
-        name: torrent.name,
-        clientWidth: virtualList.clientWidth.value
-      })
-      total += heightInfo.totalHeight
-      heights.push(total)
-    }
+    })
 
-    return {
+    const result = {
       heights,
       mapRowHeights
     }
+    perf.end()
+    return result
   })
 
   // 计算滚动高度

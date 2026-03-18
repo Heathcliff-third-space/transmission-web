@@ -133,7 +133,8 @@
     "labels": "Labels",
     "error": "Errors",
     "directory": "Directory",
-    "tracker": "Tracker"
+    "tracker": "Tracker",
+    "copyDirectory": "Copy directory"
   },
   "status": {
     "stopped": "Stopped",
@@ -350,6 +351,7 @@
     "taskVerified": "Verified",
     "nameCopied": "Name copied",
     "pathCopied": "Path copied",
+    "directoryCopied": "Directory copied",
     "magnetCopied": "Magnet copied",
     "copyFailed": "Copy failed",
     "reannounced": "Reannounced",

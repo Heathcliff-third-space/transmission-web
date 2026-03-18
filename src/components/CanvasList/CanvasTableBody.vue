@@ -79,13 +79,12 @@ let rafId: number | null = null
 const rowMenuId = ref<number | undefined>()
 
 const tableColors = computed(() => {
-  const mixedColor = themeMode.value === 'dark' ? '#ffffff00' : '#00000000'
-  const oddColor = colord(theme.value.tableColorStriped).mix(mixedColor, 0.5).toRgbString()
-  const mixedSelectedColor = themeMode.value === 'dark' ? '#00000000' : '#ffffff00'
-  const selectedBgColor = colord(theme.value.primaryColor).mix(mixedSelectedColor, 0.3).toRgbString()
+  const selectedBgColor = colord(theme.value.primaryColor)
+    .mix(theme.value.tableColor, themeMode.value === 'dark' ? 0.76 : 0.84)
+    .toRgbString()
   return {
     selectedBgColor,
-    oddColor
+    oddColor: theme.value.tableColor
   }
 })
 
@@ -229,10 +228,10 @@ function drawRow(
 }
 
 const checkboxCheckedIcon = computed(() =>
-  getIconImg(checkboxCheckedIconUrl, 'checkboxChecked', theme.value.primaryColor)
+  getIconImg(checkboxCheckedIconUrl, 'checkboxChecked', theme.value.textColor2)
 )
 const checkboxUncheckedIcon = computed(() =>
-  getIconImg(checkboxUncheckedIconUrl, 'checkboxUnchecked', theme.value.primaryColor)
+  getIconImg(checkboxUncheckedIconUrl, 'checkboxUnchecked', theme.value.textColor3)
 )
 
 function drawCheckboxRow(ctx: CanvasRenderingContext2D, index: number, status: number, isClean?: boolean) {

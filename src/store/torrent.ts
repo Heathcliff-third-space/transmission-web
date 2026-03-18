@@ -3,15 +3,20 @@ import { rpc } from '@/api/rpc'
 import { useColumns } from '@/composables/useColumns'
 import { useSelection } from '@/composables/useSelection'
 import { useSettingStore } from '@/store/setting'
+import { isPerfEnabled, startPerfScope } from '@/utils/perf'
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, toRaw, watch } from 'vue'
 import {
+  buildDownloadDirTree,
   detailFilterOptions,
-  isFilterTorrents,
   mapToOptions,
+  matchesTorrentFilters,
   processTorrent,
   sortTorrents,
-  type IMenuItem
+  statusCountsToMap,
+  type IMenuItem,
+  type StatusCountMap,
+  type TorrentFilterValues
 } from './torrentUtils'
 
 const listFields = [
@@ -114,76 +119,117 @@ export const useTorrentStore = defineStore('torrent', () => {
     getColumnTitle
   } = useColumns()
 
-  // 真正的一次循环计算所有数据
-  const computedData = computed(() => {
+  const aggregateData = computed(() => {
+    const perf = startPerfScope('torrent.aggregateData')
+    const rawTorrents = toRaw(torrents.value)
+    const ignoredTrackerPrefixesReg = settingStore.ignoredTrackerPrefixesReg
     // 初始化统计集合
     const labelsSet = new Map<string, IMenuItem>()
     labelsSet.set('noLabels', { count: 0, label: '无标签' })
     const trackerSet = new Map<string, IMenuItem>()
     const errorStringSet = new Map<string, IMenuItem>()
     const downloadDirSet = new Map<string, IMenuItem>()
-    const statusSet = new Map<string, IMenuItem>()
-
-    // 存储过滤后的结果
-    const filtered: Torrent[] = []
-    //  生成索引映射
-    const mapFilterTorrentsIndex: Record<number, number> = {}
+    const statusCounts: StatusCountMap = {
+      downloading: 0,
+      stopped: 0,
+      completed: 0,
+      verifying: 0,
+      active: 0,
+      inactive: 0,
+      working: 0,
+      error: 0,
+      magnet: 0
+    }
     const mapTorrentsIndex: Record<number, number> = {}
 
-    // 一次循环完成所有计算：统计 + 过滤
-    let filteredIndex = 0
-    torrents.value.forEach((t, idx) => {
-      mapTorrentsIndex[t.id] = idx
-      // 将选项全部放到 map 中
-      detailFilterOptions(t, labelsSet, trackerSet, errorStringSet, downloadDirSet, statusSet)
-      // 如果通过所有过滤条件，加入结果数组
-      if (
-        isFilterTorrents(t, search, statusFilter, labelsFilter, trackerFilter, errorStringFilter, downloadDirFilter)
-      ) {
-        filtered.push(t)
-        mapFilterTorrentsIndex[t.id] = filteredIndex++
-      }
+    perf.section('aggregateOptions', () => {
+      rawTorrents.forEach((t, idx) => {
+        mapTorrentsIndex[t.id] = idx
+        detailFilterOptions(
+          t,
+          labelsSet,
+          trackerSet,
+          errorStringSet,
+          downloadDirSet,
+          statusCounts,
+          ignoredTrackerPrefixesReg
+        )
+      })
     })
 
-    // === 3. 排序（只对过滤后的数据进行排序） ===
-    if (sortKey.value) {
-      sortTorrents(filtered, sortKey, sortOrder)
-    }
-    // 检测所有的 filter 的值是否在 map 里面，如果不在重置成全部
-    if (!statusSet.get(statusFilter.value)) {
-      statusFilter.value = 'all'
-    }
-    if (!labelsSet.get(labelsFilter.value)) {
-      labelsFilter.value = 'all'
-    }
-    if (!trackerSet.get(trackerFilter.value)) {
-      trackerFilter.value = 'all'
-    }
-    if (!errorStringSet.get(errorStringFilter.value)) {
-      errorStringFilter.value = 'all'
-    }
-    if (!downloadDirSet.get(downloadDirFilter.value)) {
-      downloadDirFilter.value = 'all'
-    }
-    const options = {
+    const downloadDirTree = perf.section('buildDownloadDirTree', () => buildDownloadDirTree(rawTorrents))
+    const options = perf.section('buildOptions', () => ({
       labelsOptions: mapToOptions(labelsSet, torrents.value.length),
       trackerOptions: mapToOptions(trackerSet, torrents.value.length),
       errorStringOptions: mapToOptions(errorStringSet, torrents.value.length),
       downloadDirOptions: mapToOptions(downloadDirSet, torrents.value.length),
-      statusOptions: mapToOptions(statusSet, torrents.value.length)
-    }
-    return {
+      downloadDirTreeOptions: downloadDirTree.tree,
+      downloadDirTotalSize: downloadDirTree.totalSize,
+      statusOptions: mapToOptions(statusCountsToMap(statusCounts), torrents.value.length)
+    }))
+    const result = {
       options,
-      filterTorrents: filtered,
-      mapFilterTorrentsIndex,
-      mapTorrentsIndex: mapTorrentsIndex
+      mapTorrentsIndex,
+      validStatusKeys: new Set(Object.keys(statusCounts)),
+      validLabelsKeys: new Set(labelsSet.keys()),
+      validTrackerKeys: new Set(trackerSet.keys()),
+      validErrorKeys: new Set(errorStringSet.keys()),
+      validDownloadDirKeys: downloadDirTree.validKeys
     }
+    perf.end()
+    return result
   })
 
-  // 从合并的 computed 中提取各个部分
-  const options = computed(() => computedData.value.options)
-  const filterTorrents = computed(() => computedData.value.filterTorrents)
-  const mapFilterTorrentsIndex = computed(() => computedData.value.mapFilterTorrentsIndex)
+  const activeFilters = computed<TorrentFilterValues>(() => ({
+    search: search.value,
+    statusFilter: statusFilter.value,
+    labelsFilter: labelsFilter.value,
+    trackerFilter: trackerFilter.value,
+    errorStringFilter: errorStringFilter.value,
+    downloadDirFilter: downloadDirFilter.value
+  }))
+
+  const filteredTorrents = computed(() => {
+    const perf = startPerfScope('torrent.filterTorrents', 6)
+    const currentFilters = activeFilters.value
+    const rawTorrents = toRaw(torrents.value)
+    const filtered: Torrent[] = []
+
+    perf.section('walkTorrents', () => {
+      for (const torrent of rawTorrents) {
+        if (matchesTorrentFilters(torrent, currentFilters)) {
+          filtered.push(torrent)
+        }
+      }
+    })
+
+    perf.end()
+    return filtered
+  })
+
+  const filterTorrents = computed(() => {
+    const perf = startPerfScope('torrent.sortFilteredTorrents', 6)
+    const sorted = [...filteredTorrents.value]
+
+    if (sortKey.value) {
+      perf.section('sortFiltered', () => {
+        sortTorrents(sorted, sortKey, sortOrder)
+      })
+    }
+
+    perf.end()
+    return sorted
+  })
+
+  const mapFilterTorrentsIndex = computed(() => {
+    const indexMap: Record<number, number> = {}
+    filterTorrents.value.forEach((torrent, index) => {
+      indexMap[torrent.id] = index
+    })
+    return indexMap
+  })
+
+  const options = computed(() => aggregateData.value.options)
 
   // selection 相关逻辑拆分
   const {
@@ -204,7 +250,7 @@ export const useTorrentStore = defineStore('torrent', () => {
     let newRes = res?.arguments?.torrents || []
     newRes = newRes.map((t) => {
       let item = processTorrent(t)
-      const index = computedData.value.mapTorrentsIndex[item.id]
+      const index = aggregateData.value.mapTorrentsIndex[item.id]
       if (index >= 0) {
         item = Object.assign({}, old[index], item)
       }
@@ -214,23 +260,39 @@ export const useTorrentStore = defineStore('torrent', () => {
   }
 
   async function fetchDetails() {
+    const perf = startPerfScope('torrent.fetchDetails', 6)
     if (selectedKeys.value.length === 0) {
+      perf.end()
       return
     }
     const id = lastSelectedKey.value
     if (id === null) {
+      perf.end()
       return
     }
-    const res = await rpc.torrentGet([...detailFields, ...listFields], [id], {
-      params: {
-        type: 'detail'
-      }
-    })
-    const index = computedData.value.mapTorrentsIndex[id]
+    const res = await perf.section('rpc.torrentGet(detail)', async () =>
+      rpc.torrentGet([...detailFields, ...listFields], [id], {
+        params: {
+          type: 'detail'
+        }
+      })
+    )
+    const index = aggregateData.value.mapTorrentsIndex[id]
     if (index >= 0 && res?.arguments?.torrents?.[0]) {
-      Object.assign(torrents.value[index], res?.arguments?.torrents?.[0])
+      perf.section('mergeDetailIntoTorrent', () => {
+        Object.assign(torrents.value[index], res?.arguments?.torrents?.[0])
+      })
     }
+    perf.end()
   }
+
+  const torrentMap = computed(() => {
+    const map = new Map<number, Torrent>()
+    torrents.value.forEach((torrent) => {
+      map.set(torrent.id, torrent)
+    })
+    return map
+  })
 
   const interval = computed(() => settingStore.setting.polling.torrentInterval * 1000)
   const { pause: stopPolling, resume: startPolling } = useIntervalFn(fetchTorrents, interval, { immediate: false })
@@ -239,13 +301,54 @@ export const useTorrentStore = defineStore('torrent', () => {
     immediate: false
   })
 
-  watch([search, statusFilter, labelsFilter, trackerFilter, errorStringFilter, downloadDirFilter], () => {
+  watch(
+    aggregateData,
+    (data) => {
+      if (!data.validStatusKeys.has(statusFilter.value)) {
+        statusFilter.value = 'all'
+      }
+      if (!data.validLabelsKeys.has(labelsFilter.value)) {
+        labelsFilter.value = 'all'
+      }
+      if (!data.validTrackerKeys.has(trackerFilter.value)) {
+        trackerFilter.value = 'all'
+      }
+      if (!data.validErrorKeys.has(errorStringFilter.value)) {
+        errorStringFilter.value = 'all'
+      }
+      if (!data.validDownloadDirKeys.has(downloadDirFilter.value)) {
+        downloadDirFilter.value = 'all'
+      }
+    },
+    {
+      immediate: true
+    }
+  )
+
+  watch([search, statusFilter, labelsFilter, trackerFilter, errorStringFilter, downloadDirFilter], (next, prev) => {
+    if (isPerfEnabled()) {
+      const keys = ['search', 'status', 'labels', 'tracker', 'error', 'directory']
+      const changed = keys.reduce<Record<string, { from: string; to: string }>>((acc, key, index) => {
+        if (next[index] !== prev[index]) {
+          acc[key] = {
+            from: String(prev[index]),
+            to: String(next[index])
+          }
+        }
+        return acc
+      }, {})
+
+      if (Object.keys(changed).length > 0) {
+        console.info('[perf] torrent.filters.changed', changed)
+      }
+    }
     clearSelectedKeys()
   })
   ;(window as any).torrents = torrents
   return {
     getColumnTitle,
     torrents,
+    torrentMap,
     filterTorrents,
     mapFilterTorrentsIndex,
     statusFilter,
@@ -258,6 +361,8 @@ export const useTorrentStore = defineStore('torrent', () => {
     trackerOptions: computed(() => options.value.trackerOptions),
     errorStringOptions: computed(() => options.value.errorStringOptions),
     downloadDirOptions: computed(() => options.value.downloadDirOptions),
+    downloadDirTreeOptions: computed(() => options.value.downloadDirTreeOptions),
+    downloadDirTotalSize: computed(() => options.value.downloadDirTotalSize),
     statusOptions: computed(() => options.value.statusOptions),
     fetchTorrents,
     mapSelectedKeys,

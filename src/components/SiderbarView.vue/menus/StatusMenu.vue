@@ -2,6 +2,7 @@
   <n-menu
     :indent="8"
     :options="statusMenuOptions"
+    :theme-overrides="sidebarMenuThemeOverrides"
     v-model:value="torrentStore.statusFilter"
     v-model:expanded-keys="settingStore.menuExpandedKeys"
   />
@@ -12,6 +13,7 @@ import { useTorrentStore, useSettingStore } from '@/store'
 import { renderIcon } from '@/utils'
 import { ShuffleOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
+import { sidebarMenuThemeOverrides } from './menuThemeOverrides'
 
 const torrentStore = useTorrentStore()
 const settingStore = useSettingStore()

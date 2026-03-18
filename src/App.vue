@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { darkTheme } from 'naive-ui'
 import { useSettingStore } from './store'
+import { darkThemeOverrides, lightThemeOverrides } from './theme/themeOverrides'
 
 const settingStore = useSettingStore()
 const theme = computed(() => (settingStore.setting.theme === 'dark' ? darkTheme : null))
+const themeOverrides = computed(() =>
+  settingStore.setting.theme === 'dark' ? darkThemeOverrides : lightThemeOverrides
+)
 
 watchEffect(() => {
   document.documentElement.setAttribute('data-theme', settingStore.setting.theme)
@@ -11,7 +15,7 @@ watchEffect(() => {
 </script>
 
 <template>
-  <n-config-provider :theme="theme">
+  <n-config-provider :theme="theme" :theme-overrides="themeOverrides">
     <n-global-style />
     <n-el :class="$style.container">
       <n-modal-provider>

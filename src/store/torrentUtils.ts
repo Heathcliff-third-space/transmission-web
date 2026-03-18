@@ -4,13 +4,137 @@ import { Status } from '@/types/tr'
 import { ShuffleOutline } from '@vicons/ionicons5'
 import i18n from '@/i18n'
 import { isFunction } from 'lodash-es'
-import { useSettingStore } from './setting'
 
 export interface IMenuItem {
   icon?: Component
   count: number
   color?: string
   label?: string
+}
+
+export type StatusCountMap = Record<string, number>
+
+export interface DownloadDirTreeOption {
+  key: string
+  label: string
+  count: number
+  size: number
+  children?: DownloadDirTreeOption[]
+  [key: string]: unknown
+}
+
+interface DownloadDirTreeNode extends DownloadDirTreeOption {
+  childrenMap: Map<string, DownloadDirTreeNode>
+}
+
+export function normalizeDownloadDirPath(path: string): string {
+  const normalized = (path || '').replace(/\\/g, '/')
+  if (!normalized || normalized === '/') {
+    return normalized || '/'
+  }
+  return normalized.replace(/\/+$/, '')
+}
+
+function getDownloadDirSegments(path: string) {
+  const normalized = normalizeDownloadDirPath(path)
+  if (!normalized) {
+    return []
+  }
+  if (normalized === '/') {
+    return [{ key: '/', label: '/' }]
+  }
+
+  const isUncPath = normalized.startsWith('//')
+  const isAbsolutePath = !isUncPath && normalized.startsWith('/')
+  const parts = normalized.split('/').filter(Boolean)
+
+  if (parts.length === 0) {
+    return []
+  }
+
+  const segments: Array<{ key: string; label: string }> = []
+  let currentPath = isUncPath ? `//${parts[0]}` : isAbsolutePath ? `/${parts[0]}` : parts[0]
+
+  segments.push({
+    key: currentPath,
+    label: isUncPath ? `//${parts[0]}` : isAbsolutePath ? `/${parts[0]}` : parts[0]
+  })
+
+  for (let index = 1; index < parts.length; index++) {
+    currentPath = `${currentPath}/${parts[index]}`
+    segments.push({
+      key: currentPath,
+      label: parts[index]
+    })
+  }
+
+  return segments
+}
+
+function sortDownloadDirTree(nodes: DownloadDirTreeNode[]): DownloadDirTreeOption[] {
+  return nodes
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map(({ childrenMap, ...node }) => ({
+      ...node,
+      children: childrenMap.size > 0 ? sortDownloadDirTree(Array.from(childrenMap.values())) : undefined
+    }))
+}
+
+export function buildDownloadDirTree(torrents: Torrent[]) {
+  const rootMap = new Map<string, DownloadDirTreeNode>()
+  const validKeys = new Set<string>(['all'])
+  let totalSize = 0
+
+  torrents.forEach((torrent) => {
+    if (!torrent.downloadDir) {
+      return
+    }
+
+    const dirSize = torrent.sizeWhenDone || 0
+    totalSize += dirSize
+
+    let currentMap = rootMap
+    getDownloadDirSegments(torrent.downloadDir).forEach((segment) => {
+      validKeys.add(segment.key)
+
+      let node = currentMap.get(segment.key)
+      if (!node) {
+        node = {
+          key: segment.key,
+          label: segment.label,
+          count: 0,
+          size: 0,
+          children: undefined,
+          childrenMap: new Map<string, DownloadDirTreeNode>()
+        }
+        currentMap.set(segment.key, node)
+      }
+
+      node.count += 1
+      node.size += dirSize
+      currentMap = node.childrenMap
+    })
+  })
+
+  return {
+    tree: sortDownloadDirTree(Array.from(rootMap.values())),
+    validKeys,
+    totalSize
+  }
+}
+
+export function getNormalizedTrackerHost(host: string, ignoredTrackerPrefixesReg: RegExp) {
+  let normalizedHost = host || ''
+  const portMatch = portRe.exec(normalizedHost)
+  if (portMatch != null) {
+    normalizedHost = normalizedHost.substring(0, portMatch.index)
+  }
+  const prefixMatch = ignoredTrackerPrefixesReg.exec(normalizedHost)
+  const matchedPrefix = prefixMatch?.groups?.prefix || prefixMatch?.[1]
+  if (matchedPrefix) {
+    normalizedHost = normalizedHost.substring(matchedPrefix.length + 1)
+  }
+  return normalizedHost
 }
 
 // 将所有的选项放到 map
@@ -20,41 +144,32 @@ export const detailFilterOptions = function (
   trackerSet: Map<string, IMenuItem>,
   errorStringSet: Map<string, IMenuItem>,
   downloadDirSet: Map<string, IMenuItem>,
-  statusSet: Map<string, IMenuItem>
+  statusCounts: StatusCountMap,
+  ignoredTrackerPrefixesReg: RegExp
 ) {
-  const $t = i18n.global.t
-  const settingStore = useSettingStore()
-  // === 1. 统计各种选项（用于生成过滤选项） ===
   // labels 统计
   if (Array.isArray(t.labels) && t.labels.length > 0) {
-    t.labels.forEach((l: string) => {
+    for (const l of t.labels) {
       const prev = labelsSet.get(l)
       labelsSet.set(l, { count: (prev?.count || 0) + 1 })
-    })
+    }
   } else {
     const prev = labelsSet.get('noLabels')
-    labelsSet.set('noLabels', { count: (prev?.count || 0) + 1, label: $t('common.noLabels') })
+    labelsSet.set('noLabels', { count: (prev?.count || 0) + 1, label: 'common.noLabels' })
   }
 
   // tracker 统计
-  if (t.trackerStats.length > 0) {
-    t.trackerStats.forEach((tracker: TrackerStat) => {
-      let host = tracker.host || ''
-      const portMatch = portRe.exec(host)
-      if (portMatch != null) {
-        host = host.substring(0, portMatch.index)
-      }
-      const prefixMatch = settingStore.ignoredTrackerPrefixesReg.exec(host)
-      // console.debug("prefixMatch", prefixMatch, settingStore.ignoredTrackerPrefixesReg)
-      if (prefixMatch?.groups !== undefined) {
-        host = host.substring(prefixMatch.groups.prefix.length + 1)
-      }
+  const trackerHosts = t.cachedTrackerHosts?.length
+    ? t.cachedTrackerHosts
+    : t.trackerStats.map((tracker: TrackerStat) => getNormalizedTrackerHost(tracker.host || '', ignoredTrackerPrefixesReg))
+  if (trackerHosts.length > 0) {
+    for (const host of trackerHosts) {
       const prev = trackerSet.get(host)
       trackerSet.set(host, { count: (prev?.count || 0) + 1 })
-    })
+    }
   } else {
     const prev = trackerSet.get('noTracker')
-    trackerSet.set('noTracker', { count: (prev?.count || 0) + 1, label: $t('common.noTracker') })
+    trackerSet.set('noTracker', { count: (prev?.count || 0) + 1, label: 'common.noTracker' })
   }
 
   // error 统计
@@ -69,20 +184,17 @@ export const detailFilterOptions = function (
     downloadDirSet.set(t.downloadDir, { count: (prev?.count || 0) + 1 })
   }
 
-  // status 统计
-  statusFilters.forEach((filter) => {
-    const prev = statusSet.get(filter.key)
-    let count = prev?.count || 0
-    if (filter.filter(t)) {
-      count++
-    }
-    statusSet.set(filter.key, {
-      icon: filter.icon,
-      color: filter.color,
-      label: filter.label($t),
-      count: count
-    })
-  })
+  statusCounts.downloading += t.status === Status.downloading ? 1 : 0
+  statusCounts.stopped += t.status === Status.stopped ? 1 : 0
+  statusCounts.completed +=
+    t.status === Status.seeding || (t.sizeWhenDone > 0 && Math.max(t.sizeWhenDone - t.haveValid, 0) === 0) ? 1 : 0
+  statusCounts.verifying +=
+    t.status === Status.verifying || t.status === Status.queuedToVerify || t.status === Status.queuedToDownload ? 1 : 0
+  statusCounts.active += t.rateDownload > 0 || t.rateUpload > 0 ? 1 : 0
+  statusCounts.inactive += t.rateDownload === 0 && t.rateUpload === 0 && t.status !== Status.stopped ? 1 : 0
+  statusCounts.working += t.status !== Status.stopped ? 1 : 0
+  statusCounts.error += t.error !== 0 || t.cachedError !== '' ? 1 : 0
+  statusCounts.magnet += t.status === Status.downloading && t.pieceCount === 0 ? 1 : 0
 }
 
 // 将 map 转换成数组
@@ -91,7 +203,11 @@ export const mapToOptions = (map: Map<string, IMenuItem>, total: number) => {
   return [
     { key: 'all', label: `${$t('common.all', { total })}`, icon: ShuffleOutline },
     ...Array.from(map.entries()).map(([item, value]) => {
-      const label = isFunction(value.label) ? value.label($t) : value.label
+      const label = isFunction(value.label)
+        ? value.label($t)
+        : typeof value.label === 'string' && value.label.includes('.')
+          ? $t(value.label)
+          : value.label
       return {
         key: item,
         label: `${label || item}（${value.count}）`,
@@ -107,7 +223,96 @@ export const mapToOptions = (map: Map<string, IMenuItem>, total: number) => {
   ]
 }
 
+export const statusCountsToMap = (statusCounts: StatusCountMap) => {
+  const $t = i18n.global.t
+  const map = new Map<string, IMenuItem>()
+  statusFilters.forEach((filter) => {
+    map.set(filter.key, {
+      icon: filter.icon,
+      color: filter.color,
+      label: filter.label($t),
+      count: statusCounts[filter.key] || 0
+    })
+  })
+  return map
+}
+
 // 是否可以过滤这个种子
+export interface TorrentFilterValues {
+  search: string
+  statusFilter: string
+  labelsFilter: string
+  trackerFilter: string
+  errorStringFilter: string
+  downloadDirFilter: string
+}
+
+export const matchesTorrentFilters = function (t: Torrent, filters: TorrentFilterValues) {
+  const { search, statusFilter, labelsFilter, trackerFilter, errorStringFilter, downloadDirFilter } = filters
+  // === 2. 同时进行过滤判断 ===
+  let shouldInclude = true
+
+  // 搜索过滤
+  if (search && !t.name.includes(search)) {
+    shouldInclude = false
+  }
+
+  // 状态过滤
+  if (shouldInclude && statusFilter && statusFilter !== 'all' && !statusFilterFunMap.get(statusFilter)?.(t)) {
+    shouldInclude = false
+  }
+
+  // 标签过滤
+  if (
+    shouldInclude &&
+    labelsFilter &&
+    labelsFilter !== 'all' &&
+    !(labelsFilter == 'noLabels' && (!t.labels || t.labels.length === 0)) &&
+    !t.labels.includes(labelsFilter)
+  ) {
+    shouldInclude = false
+  }
+
+  // tracker 过滤
+  if (
+    shouldInclude &&
+    trackerFilter &&
+    trackerFilter !== 'all' &&
+    !(trackerFilter == 'noTracker' && t.trackerStats.length === 0) &&
+    !t.trackerStats.some((tracker) => tracker.host.includes(trackerFilter))
+  ) {
+    shouldInclude = false
+  }
+
+  // 错误过滤
+  if (shouldInclude && errorStringFilter && errorStringFilter !== 'all' && t.cachedError !== errorStringFilter) {
+    shouldInclude = false
+  }
+
+  // 下载目录过滤
+  if (
+    shouldInclude &&
+    downloadDirFilter &&
+    downloadDirFilter !== 'all' &&
+    (() => {
+      const torrentDir = normalizeDownloadDirPath(t.downloadDir)
+      const filterDir = normalizeDownloadDirPath(downloadDirFilter)
+
+      if (torrentDir === filterDir) {
+        return false
+      }
+      if (filterDir === '/') {
+        return !torrentDir.startsWith('/')
+      }
+      return !torrentDir.startsWith(`${filterDir}/`)
+    })()
+  ) {
+    shouldInclude = false
+  }
+
+  return shouldInclude
+}
+
 export const isFilterTorrents = function (
   t: Torrent,
   search: globalThis.Ref<string, string>,
@@ -117,67 +322,14 @@ export const isFilterTorrents = function (
   errorStringFilter: globalThis.Ref<string, string>,
   downloadDirFilter: globalThis.Ref<string, string>
 ) {
-  // === 2. 同时进行过滤判断 ===
-  let shouldInclude = true
-
-  // 搜索过滤
-  if (search.value && !t.name.includes(search.value)) {
-    shouldInclude = false
-  }
-
-  // 状态过滤
-  if (
-    shouldInclude &&
-    statusFilter.value &&
-    statusFilter.value !== 'all' &&
-    !statusFilterFunMap.get(statusFilter.value)?.(t)
-  ) {
-    shouldInclude = false
-  }
-
-  // 标签过滤
-  if (
-    shouldInclude &&
-    labelsFilter.value &&
-    labelsFilter.value !== 'all' &&
-    !(labelsFilter.value == 'noLabels' && (!t.labels || t.labels.length === 0)) &&
-    !t.labels.includes(labelsFilter.value)
-  ) {
-    shouldInclude = false
-  }
-
-  // tracker 过滤
-  if (
-    shouldInclude &&
-    trackerFilter.value &&
-    trackerFilter.value !== 'all' &&
-    !(trackerFilter.value == 'noTracker' && t.trackerStats.length === 0) &&
-    !t.trackerStats.some((tracker) => tracker.host.includes(trackerFilter.value))
-  ) {
-    shouldInclude = false
-  }
-
-  // 错误过滤
-  if (
-    shouldInclude &&
-    errorStringFilter.value &&
-    errorStringFilter.value !== 'all' &&
-    t.cachedError !== errorStringFilter.value
-  ) {
-    shouldInclude = false
-  }
-
-  // 下载目录过滤
-  if (
-    shouldInclude &&
-    downloadDirFilter.value &&
-    downloadDirFilter.value !== 'all' &&
-    t.downloadDir !== downloadDirFilter.value
-  ) {
-    shouldInclude = false
-  }
-
-  return shouldInclude
+  return matchesTorrentFilters(t, {
+    search: search.value,
+    statusFilter: statusFilter.value,
+    labelsFilter: labelsFilter.value,
+    trackerFilter: trackerFilter.value,
+    errorStringFilter: errorStringFilter.value,
+    downloadDirFilter: downloadDirFilter.value
+  })
 }
 
 // 排序
@@ -314,6 +466,7 @@ export const getPeersTotal = (torrent: Torrent): number => {
 
 // 处理 torrent 数据
 export const processTorrent = (torrent: Torrent) => {
+  const trackerHosts = torrent.trackerStats.map((tracker) => getNormalizedTrackerHost(tracker.host || '', prefixRe))
   return {
     ...torrent,
     downloadDir: (torrent.downloadDir as string).replace(/\\/g, '/'),
@@ -321,6 +474,7 @@ export const processTorrent = (torrent: Torrent) => {
     cachedTrackerStatus: getTrackerStatus(torrent),
     // 主要的 tracker，并进行格式化
     cachedMainTracker: getTorrentMainTracker(torrent),
+    cachedTrackerHosts: trackerHosts,
     //做种总数
     cachedSeedsTotal: getSeedsTotal(torrent),
     // 当前下载总数

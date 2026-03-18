@@ -1,5 +1,6 @@
 import type { Torrent } from '@/api/rpc'
 import { useSettingStore, useTorrentStore } from '@/store'
+import { startPerfScope } from '@/utils/perf'
 import { defineStore } from 'pinia'
 import { fitText } from '../cells/utils'
 import { calculateRowHeight, HEADER_HEIGHT, ICON_GAP, ICON_SIZE, ITEM_HEIGHT, PADDING_X, TOOLBAR_HEIGHT } from './utils'
@@ -23,35 +24,40 @@ export const useTableStore = defineStore('CanvasTable', () => {
 
   // 计算桌面端表格累积高度
   const cumulativeHeights = computed(() => {
+    const perf = startPerfScope('table.cumulativeHeights', 6)
     const heights: number[] = []
     const mapRowHeights = new Map<number, number>()
     const mapColumnWidth = torrentStore.mapColumnWidth
     let total = 0
 
-    for (const torrent of torrentStore.filterTorrents) {
-      const cacheData = cacheRowHeights.get(torrent.id)
-      if (cacheData && cacheData.labels === torrent.labels.toString()) {
-        total += cacheData.height
+    perf.section('walkFilteredTorrents', () => {
+      for (const torrent of torrentStore.filterTorrents) {
+        const cacheData = cacheRowHeights.get(torrent.id)
+        if (cacheData && cacheData.labels === torrent.labels.toString()) {
+          total += cacheData.height
+          heights.push(total)
+          mapRowHeights.set(torrent.id, cacheData.height)
+          continue
+        }
+        const height = calculateRowHeight(
+          torrent,
+          mapColumnWidth['labels'],
+          settingStore.setting.singleLine,
+          settingStore.themeVars
+        )
+        mapRowHeights.set(torrent.id, height)
+        cacheRowHeights.set(torrent.id, { height, labels: torrent.labels.toString() })
+        total += height
         heights.push(total)
-        mapRowHeights.set(torrent.id, cacheData.height)
-        continue
       }
-      const height = calculateRowHeight(
-        torrent,
-        mapColumnWidth['labels'],
-        settingStore.setting.singleLine,
-        settingStore.themeVars
-      )
-      mapRowHeights.set(torrent.id, height)
-      cacheRowHeights.set(torrent.id, { height, labels: torrent.labels.toString() })
-      total += height
-      heights.push(total)
-    }
+    })
 
-    return {
+    const result = {
       heights,
       mapRowHeights
     }
+    perf.end()
+    return result
   })
 
   // 计算滚动高度
@@ -103,6 +109,7 @@ export const useTableStore = defineStore('CanvasTable', () => {
   watch(
     textComputeTriggers,
     () => {
+      const perf = startPerfScope('table.textEllipsis', 6)
       const ctx = canvas.getContext('2d')!
       const theme = settingStore.themeVars
       ctx.reset()
@@ -120,48 +127,51 @@ export const useTableStore = defineStore('CanvasTable', () => {
       ].filter(Boolean) as (keyof Torrent)[]
       const mapRowHeights = cumulativeHeights.value.mapRowHeights
 
-      for (let i = viewport.renderStartIdx.value; i <= viewport.renderEndIdx.value; i++) {
-        const row = torrentStore.filterTorrents[i]
-        if (!row) {
-          break
-        }
-        keys.forEach((key) => {
-          const data = row[key as keyof Torrent]?.toString()
-          if (typeof data === 'string' && data.length > 0) {
-            const columnWidth = torrentStore.mapColumnWidth[key]
-            if (!columnWidth) {
-              return
-            }
-            // 检查是否已有缓存
-            const existingData = map.get(row.id)
-            let maxWidth = columnWidth - PADDING_X * 2
-            const maxHeight = mapRowHeights.get(row.id) || ITEM_HEIGHT
-            if (key === 'name') {
-              maxWidth -= ICON_SIZE + ICON_GAP
-            }
-            const cacheData = existingData?.[key]
-            // 检查是否需要重新计算
-            if (
-              !cacheData ||
-              cacheData.text !== data ||
-              cacheData.width !== columnWidth ||
-              cacheData.height !== maxHeight
-            ) {
-              const fitTxt = fitText(ctx, data, maxWidth, maxHeight, true)
-              map.set(row.id, {
-                ...existingData,
-                [key]: {
-                  fitTxt,
-                  text: data,
-                  width: columnWidth,
-                  height: maxHeight
-                }
-              })
-            }
+      perf.section('fitVisibleText', () => {
+        for (let i = viewport.renderStartIdx.value; i <= viewport.renderEndIdx.value; i++) {
+          const row = torrentStore.filterTorrents[i]
+          if (!row) {
+            break
           }
-        })
-      }
+          keys.forEach((key) => {
+            const data = row[key as keyof Torrent]?.toString()
+            if (typeof data === 'string' && data.length > 0) {
+              const columnWidth = torrentStore.mapColumnWidth[key]
+              if (!columnWidth) {
+                return
+              }
+              // 检查是否已有缓存
+              const existingData = map.get(row.id)
+              let maxWidth = columnWidth - PADDING_X * 2
+              const maxHeight = mapRowHeights.get(row.id) || ITEM_HEIGHT
+              if (key === 'name') {
+                maxWidth -= ICON_SIZE + ICON_GAP
+              }
+              const cacheData = existingData?.[key]
+              // 检查是否需要重新计算
+              if (
+                !cacheData ||
+                cacheData.text !== data ||
+                cacheData.width !== columnWidth ||
+                cacheData.height !== maxHeight
+              ) {
+                const fitTxt = fitText(ctx, data, maxWidth, maxHeight, true)
+                map.set(row.id, {
+                  ...existingData,
+                  [key]: {
+                    fitTxt,
+                    text: data,
+                    width: columnWidth,
+                    height: maxHeight
+                  }
+                })
+              }
+            }
+          })
+        }
+      })
       ellipsisTxtMap.value = map
+      perf.end()
     },
     { flush: 'post' }
   )

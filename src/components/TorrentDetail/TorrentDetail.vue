@@ -37,6 +37,7 @@
 <script setup lang="ts">
 import type { Torrent } from '@/api/rpc'
 import { useTorrentStore } from '@/store'
+import { startPerfScope } from '@/utils/perf'
 import { CloseCircleOutline as CloseIcon } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 
@@ -63,11 +64,15 @@ const { t: $t } = useI18n()
 const torrentStore = useTorrentStore()
 const selectedCount = computed(() => torrentStore.selectedKeys.length)
 const torrent = computed<Torrent | undefined>(() => {
+  const perf = startPerfScope('detail.selectedTorrentLookup', 4)
   if (torrentStore.lastSelectedKey === null) {
+    perf.end()
     return undefined
   }
   const id = torrentStore.lastSelectedKey
-  return torrentStore.filterTorrents.find((t) => t.id === id)
+  const selectedTorrent = torrentStore.torrentMap.get(id)
+  perf.end()
+  return selectedTorrent
 })
 
 const currentTab = ref<'general' | 'files' | 'peers' | 'tracker'>('general')
